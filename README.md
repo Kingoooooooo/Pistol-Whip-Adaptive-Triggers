@@ -1,9 +1,14 @@
 ﻿# Pistol-Whip-Adaptive-Triggers
-A mod that adds Adaptive Triggers for PSVR2 to the PC version of Pistol Whip
 
 # Requirements
 PSVR2Toolkit (https://github.com/BnuuySolutions/PSVR2Toolkit)
 
 MelonLoader (https://github.com/LavaGang/MelonLoader)
 
+# Installation
+
+1. Make sure PSVR2Toolkit is installed
+2. Install MelonLoader for Pistol Whip
+3. Download the dll in the Releases section and drop it into .\Pistol Whip\Mods
+4. Enjoy!
 
