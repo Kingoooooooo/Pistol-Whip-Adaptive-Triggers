@@ -1,4 +1,4 @@
-﻿using MelonLoader;
+using MelonLoader;
 using Il2Cpp;
 using System.Collections;
 using UnityEngine;
@@ -16,6 +16,7 @@ namespace PSVRTriggers
         private IpcClient ipcClient;
         private int lastGunType = -1;
         private bool lastDualWieldState = false;
+        private Gun lastCurrentGun = null;
 
         public override void OnInitializeMelon()
         {
@@ -43,87 +44,130 @@ namespace PSVRTriggers
             Gun currentGun = manager.currentGunLeft ?? manager.currentGunRight;
             bool dualWieldActive = manager.DualWieldActive();
 
+            // Log detailed information for debugging
+            MelonLogger.Msg($"Update - Current gun left: {manager.currentGunLeft != null}, Current gun right: {manager.currentGunRight != null}, Dual wield: {dualWieldActive}");
+            
             if (currentGun == null) return;
 
-            // Only update triggers if gun type or dual wield state changed
-            int currentGunType = (int)manager.currentGunDominantHand.gunType;
-            if (currentGunType == lastGunType && dualWieldActive == lastDualWieldState) return;
-
-            lastGunType = currentGunType;
-            lastDualWieldState = dualWieldActive;
-
-            if (dualWieldActive)
+            // Log the gun object references to see if they change
+            MelonLogger.Msg($"Update - Left gun object: {manager.currentGunLeft}, Right gun object: {manager.currentGunRight}, Current gun object: {currentGun}");
+            
+            // Determine which hand is actually being used by checking which gun is the current gun
+            EVRControllerType activeController = EVRControllerType.Right; // Default
+            if (currentGun == manager.currentGunLeft)
             {
-                ApplyDualWieldTriggerEffects(currentGunType);
+                activeController = EVRControllerType.Left;
+                MelonLogger.Msg("Determined active controller is LEFT based on current gun");
             }
-            else
+            else if (currentGun == manager.currentGunRight)
             {
-                ApplySingleHandTriggerEffects(currentGunType, manager.currentDominantHand);
+                activeController = EVRControllerType.Right;
+                MelonLogger.Msg("Determined active controller is RIGHT based on current gun");
+            }
+            
+            Gun dominantGun = currentGun; // The current gun is the one being used
+            int currentGunType = (int)dominantGun.gunType;
+            
+            // Log gun information
+            if (manager.currentGunLeft != null)
+                MelonLogger.Msg($"Update - Left gun type: {(int)manager.currentGunLeft.gunType}");
+            if (manager.currentGunRight != null)
+                MelonLogger.Msg($"Update - Right gun type: {(int)manager.currentGunRight.gunType}");
+            MelonLogger.Msg($"Update - Dominant gun type: {currentGunType}");
+            
+            // Check if this is a valid gun type
+            if (currentGunType < 0 || currentGunType > 5)
+            {
+                MelonLogger.Warning($"Unknown gun type detected: {currentGunType}");
+            }
+            
+            // Detect changes by comparing the current gun object, gun type, and dual wield state
+            bool gunChanged = (lastCurrentGun != currentGun);
+            bool gunTypeChanged = (currentGunType != lastGunType);
+            bool dualWieldChanged = (dualWieldActive != lastDualWieldState);
+            
+            // Log detailed information for debugging
+            MelonLogger.Msg($"Update - Current gun changed: {gunChanged}, Gun type changed: {gunTypeChanged}, Dual wield changed: {dualWieldChanged}, Active controller: {activeController}");
+            
+            // Update triggers if gun, gun type, or dual wield state changed
+            if (gunChanged || gunTypeChanged || dualWieldChanged)
+            {
+                MelonLogger.Msg($"Applying effects - Gun type: {currentGunType}, Dual wield: {dualWieldActive}, Active controller: {activeController}, Gun changed: {gunChanged}");
+                
+                lastGunType = currentGunType;
+                lastDualWieldState = dualWieldActive;
+                lastCurrentGun = currentGun;
+
+                if (dualWieldActive)
+                {
+                    ApplyDualWieldTriggerEffects(currentGunType);
+                }
+                else
+                {
+                    ApplySingleHandTriggerEffectsDirect(currentGunType, activeController);
+                }
             }
         }
 
         private void ApplyDualWieldTriggerEffects(int gunType)
         {
+            // Reset all effects first to prevent conflicts
+            ipcClient.TriggerEffectDisable(EVRControllerType.Both);
+            
+            // Small delay to ensure reset takes effect
+            System.Threading.Thread.Sleep(10);
+            
+            MelonLogger.Msg($"Applying dual wield effect for gun type {gunType}");
+            
             switch (gunType)
             {
                 case 0: // Gun type 0 - Light weapon effect
-                    ipcClient.TriggerEffectWeapon(EVRControllerType.Left, 2, 5, 4);
-                    ipcClient.TriggerEffectWeapon(EVRControllerType.Right, 2, 5, 4);
+                    ipcClient.TriggerEffectWeapon(EVRControllerType.Left, 2, 4, 4);
+                    ipcClient.TriggerEffectWeapon(EVRControllerType.Right, 2, 4, 4);
                     break;
 
                 case 1: // Gun type 1 - Medium weapon effect
-                    ipcClient.TriggerEffectWeapon(EVRControllerType.Left, 2, 8, 8);
-                    ipcClient.TriggerEffectWeapon(EVRControllerType.Right, 2, 8, 8);
+                    ipcClient.TriggerEffectWeapon(EVRControllerType.Left, 2, 4, 8);
+                    ipcClient.TriggerEffectWeapon(EVRControllerType.Right, 2, 4, 8);
                     break;
 
-                case 2: // Gun type 2 - Heavy weapon effect
-                    ipcClient.TriggerEffectWeapon(EVRControllerType.Left, 0, 4, 8);
-                    ipcClient.TriggerEffectWeapon(EVRControllerType.Right, 0, 4, 8);
+                case 2: // Gun type 2 - Heavy weapon effect - Multiple position feedback
+                    byte[] strengthPattern2 = new byte[10] { 4, 0, 0, 5, 0, 0, 6, 0, 0, 7 };
+                    ipcClient.TriggerEffectMultiplePositionFeedback(EVRControllerType.Left, strengthPattern2);
+                    ipcClient.TriggerEffectMultiplePositionFeedback(EVRControllerType.Right, strengthPattern2);
                     break;
 
-                case 3: // Gun type 3 - Multiple position feedback (burst fire?)
-                    byte[] strengthPattern = new byte[10] { 5, 0, 0, 6, 0, 0, 7, 0, 0, 8 };
-                    ipcClient.TriggerEffectMultiplePositionFeedback(EVRControllerType.Left, strengthPattern);
-                    ipcClient.TriggerEffectMultiplePositionFeedback(EVRControllerType.Right, strengthPattern);
-                    break;
-
-                case 4: // Gun type 4 - No effect (silenced weapon?)
-                    ipcClient.TriggerEffectDisable(EVRControllerType.Both);
-                    break;
-
-                case 5: // Gun type 5 - Slope feedback (charging weapon?)
+                case 3: // Gun type 3 - Slope feedback
                     ipcClient.TriggerEffectSlopeFeedback(EVRControllerType.Left, 1, 9, 8, 1);
                     ipcClient.TriggerEffectSlopeFeedback(EVRControllerType.Right, 1, 9, 8, 1);
                     break;
 
+                case 4: // Gun type 4 - No effect (silenced weapon?)
+                    // Already disabled above, no additional action needed
+                    break;
+
+                case 5: // Gun type 5 - Strong feedback
+                    MelonLogger.Msg("Applying gun type 5 strong feedback on both controllers: position=5, strength=8");
+                    ipcClient.TriggerEffectWeapon(EVRControllerType.Both, 2, 4, 4);
+                    break;
+
                 default:
                     // Default to basic feedback for unknown gun types
+                    MelonLogger.Msg($"Unknown gun type {gunType}, applying default feedback");
                     ipcClient.TriggerEffectFeedback(EVRControllerType.Both, 128, 100);
                     break;
             }
         }
 
-        private void ApplySingleHandTriggerEffects(int gunType, PlayerGunManager.EGunHandType dominantHand)
+        private void ApplySingleHandTriggerEffectsDirect(int gunType, EVRControllerType controllerType)
         {
-            // Determine which controller based on dominant hand
-            // Check what enum values are available - common ones are LeftHand/RightHand or Left_Hand/Right_Hand
-            EVRControllerType controllerType;
-
-            // Try different possible enum value names
-            if (dominantHand.ToString().Contains("Left"))
-            {
-                controllerType = EVRControllerType.Left;
-            }
-            else if (dominantHand.ToString().Contains("Right"))
-            {
-                controllerType = EVRControllerType.Right;
-            }
-            else
-            {
-                // Default to right hand if we can't determine
-                controllerType = EVRControllerType.Right;
-                MelonLogger.Warning($"Unknown hand type: {dominantHand}, defaulting to Right");
-            }
+            // Reset all effects first to prevent conflicts
+            ipcClient.TriggerEffectDisable(EVRControllerType.Both);
+            
+            // Small delay to ensure reset takes effect
+            System.Threading.Thread.Sleep(10);
+            
+            MelonLogger.Msg($"Applying single hand effect for gun type {gunType} on {controllerType} controller");
 
             switch (gunType)
             {
@@ -135,35 +179,41 @@ namespace PSVRTriggers
                     ipcClient.TriggerEffectWeapon(controllerType, 2, 4, 8);
                     break;
 
-                case 2: // Gun type 2 - Heavy weapon effect
-                    ipcClient.TriggerEffectWeapon(controllerType, 0, 4, 8);
+                case 2: // Gun type 2 - Heavy weapon effect - Multiple position feedback
+                    byte[] strengthPattern2 = new byte[10] { 4, 0, 0, 5, 0, 0, 6, 0, 0, 7 };
+                    ipcClient.TriggerEffectMultiplePositionFeedback(controllerType, strengthPattern2);
                     break;
 
-                case 3: // Gun type 3 - Multiple position feedback
-                    byte[] strengthPattern = new byte[10] { 5, 0, 0, 6, 0, 0, 7, 0, 0, 8 };
-                    ipcClient.TriggerEffectMultiplePositionFeedback(controllerType, strengthPattern);
+                case 3: // Gun type 3 - Slope feedback
+                    ipcClient.TriggerEffectSlopeFeedback(controllerType, 1, 9, 8, 1);
                     break;
 
                 case 4: // Gun type 4 - No effect
-                    ipcClient.TriggerEffectDisable(controllerType);
+                    // Already disabled above, no additional action needed
                     break;
 
-                case 5: // Gun type 5 - Slope feedback
-                    ipcClient.TriggerEffectSlopeFeedback(controllerType, 1, 9, 8, 1);
+                case 5: // Gun type 5 - Strong feedback
+                    MelonLogger.Msg($"Applying gun type 5 strong feedback on {controllerType}: position=5, strength=8");
+                    ipcClient.TriggerEffectWeapon(controllerType, 2, 4, 4);
                     break;
 
                 default:
                     // Default to basic feedback
-                    ipcClient.TriggerEffectFeedback(controllerType, 128, 100);
+                    MelonLogger.Msg($"Unknown gun type {gunType}, applying default feedback");
+                    ipcClient.TriggerEffectFeedback(controllerType, 5, 5);
                     break;
             }
         }
 
         public override void OnApplicationQuit()
         {
-            // Clean up IPC connection when game closes
+            // Reset all effects before closing
             if (ipcClient != null)
             {
+                MelonLogger.Msg("Resetting all trigger effects before closing...");
+                ipcClient.TriggerEffectDisable(EVRControllerType.Both);
+                System.Threading.Thread.Sleep(50); // Give time for the reset to take effect
+                
                 ipcClient.Stop();
                 MelonLogger.Msg("PSVR2 IPC connection closed.");
             }
